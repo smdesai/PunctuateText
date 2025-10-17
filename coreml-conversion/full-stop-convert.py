@@ -58,11 +58,6 @@ def convert(conversion_type, model_path, saved_name):
         print(error)
         return
 
-    new_model.author = "Salesforce Inc"
-    new_model.license = ""
-    new_model.short_description = "A model that segments any text"
-    new_model.version = "1"
-
     saved_path = f"{saved_name}.mlpackage"
     new_model.save(saved_path)
 
