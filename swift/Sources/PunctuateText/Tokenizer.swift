@@ -11,6 +11,7 @@ public final class Tokenizer {
 
     // Cache for tokenized words to avoid re-tokenization
     private var tokenCache = [String: [String]]()
+    private let cacheLimit = 5000
 
     /// Initialize using vocabulary from bundle resources
     public init() throws {
@@ -48,7 +49,7 @@ public final class Tokenizer {
         // Fast path: check if whole word exists
         if vocab[lowerWord] != nil {
             let result = [lowerWord]
-            tokenCache[word] = result
+            storeInCache(result, for: word)
             return result
         }
 
@@ -81,13 +82,20 @@ public final class Tokenizer {
 
             if !found {
                 let result = ["[UNK]"]
-                tokenCache[word] = result
+                storeInCache(result, for: word)
                 return result
             }
         }
 
-        tokenCache[word] = tokens
+        storeInCache(tokens, for: word)
         return tokens
+    }
+
+    private func storeInCache(_ tokens: [String], for key: String) {
+        if tokenCache.count >= cacheLimit {
+            tokenCache.removeAll(keepingCapacity: true)
+        }
+        tokenCache[key] = tokens
     }
 
     /// Encode a batch of word sequences

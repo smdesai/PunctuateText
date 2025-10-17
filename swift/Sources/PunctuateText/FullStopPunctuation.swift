@@ -7,6 +7,14 @@ import SentencePieceWrapper
 public class FullStopPunctuation {
     private let model: MLModel
     private let tokenizer: SentencePieceTokenizer
+    private let inputIdsArray: MLMultiArray
+    private let attentionMaskArray: MLMultiArray
+    private let featureProvider: MLDictionaryFeatureProvider
+    private let predictionOptions = MLPredictionOptions()
+    private let enableLogging: Bool
+
+    private let maxSequenceLength = 512
+    private let classCount = 6
 
     // Label mapping for XLM-RoBERTa punctuation model
     private let id2label = [
@@ -18,8 +26,9 @@ public class FullStopPunctuation {
         5: ":",
     ]
 
-    public init(model: MLModel) throws {
+    public init(model: MLModel, enableLogging: Bool = false) throws {
         self.model = model
+        self.enableLogging = enableLogging
 
         let bundle = Bundle.module
 
@@ -38,12 +47,21 @@ public class FullStopPunctuation {
 
         self.tokenizer = try SentencePieceTokenizer(modelPath: finalURL.path)
 
-        // Warm up the model with a dummy prediction
-        print("  Warming up model...")
+        self.inputIdsArray = try MLMultiArray(
+            shape: [1, NSNumber(value: maxSequenceLength)], dataType: .float32)
+        self.attentionMaskArray = try MLMultiArray(
+            shape: [1, NSNumber(value: maxSequenceLength)], dataType: .float32)
+        self.featureProvider = try MLDictionaryFeatureProvider(dictionary: [
+            "input_ids": MLFeatureValue(multiArray: inputIdsArray),
+            "attention_mask": MLFeatureValue(multiArray: attentionMaskArray),
+        ])
+
         let warmupStart = CFAbsoluteTimeGetCurrent()
         _ = try? self.predictChunk("test")
-        let warmupTime = CFAbsoluteTimeGetCurrent() - warmupStart
-        print("  Model warmup time: \(String(format: "%.3f", warmupTime)) seconds")
+        if enableLogging {
+            let warmupTime = CFAbsoluteTimeGetCurrent() - warmupStart
+            print("  FullStopPunctuation warmup \(String(format: "%.3f", warmupTime))s")
+        }
     }
 
     func preprocess(_ text: String) -> [String] {
@@ -65,36 +83,40 @@ public class FullStopPunctuation {
         let tokens = tokenizer.tokenize(text: text)
         let (inputIds, attentionMask) = tokenizer.encodeForModel(text: text)
 
-        // Create MLMultiArrays
-        let inputArray = try MLMultiArray(shape: [1, 512], dataType: .float32)
-        let maskArray = try MLMultiArray(shape: [1, 512], dataType: .float32)
+        // Reuse multiarray buffers
+        let totalCount = maxSequenceLength
+        let inputPointer = inputIdsArray.dataPointer.assumingMemoryBound(to: Float32.self)
+        let maskPointer = attentionMaskArray.dataPointer.assumingMemoryBound(to: Float32.self)
 
-        // Fill arrays
-        for i in 0 ..< 512 {
-            inputArray[i] = NSNumber(value: inputIds[i])
-            maskArray[i] = NSNumber(value: attentionMask[i])
+        UnsafeMutableBufferPointer(start: inputPointer, count: totalCount).update(repeating: 0)
+        UnsafeMutableBufferPointer(start: maskPointer, count: totalCount).update(repeating: 0)
+
+        let copyCount = min(inputIds.count, totalCount)
+        for idx in 0 ..< copyCount {
+            inputPointer[idx] = Float32(inputIds[idx])
+            maskPointer[idx] = Float32(attentionMask[idx])
         }
 
-        // Construct CoreML feature provider
-        let featureInputs = try MLDictionaryFeatureProvider(dictionary: [
-            "input_ids": MLFeatureValue(multiArray: inputArray),
-            "attention_mask": MLFeatureValue(multiArray: maskArray),
-        ])
-
         // Make prediction
-        let prediction = try model.prediction(from: featureInputs)
+        let prediction = try model.prediction(from: featureProvider, options: predictionOptions)
 
         guard let logits = prediction.featureValue(for: "output")?.multiArrayValue else {
             throw SegmentTextError.modelNotFound("FullStopPunctuation output tensor")
         }
 
+        let logitsPointer = logits.dataPointer.bindMemory(to: Float16.self, capacity: logits.count)
+        let logitsStrides = logits.strides.map { $0.intValue }
+        let strideToken = logitsStrides.count > 1 ? logitsStrides[1] : classCount
+        let strideClass = logitsStrides.count > 2 ? logitsStrides[2] : 1
+
         // Process output for each token (excluding special tokens)
         var results: [(entity: String, score: Float, word: String)] = []
 
         // Skip CLS token at position 0
-        for i in 1 ..< tokens.count + 1 {
+        let tokenCount = min(tokens.count + 1, inputIds.count)
+        for i in 1 ..< tokenCount {
             // Skip if we hit SEP token or padding
-            if i >= tokens.count + 1 || inputIds[i] == 2 || inputIds[i] == 1 {
+            if inputIds[i] == 2 || inputIds[i] == 1 {
                 break
             }
 
@@ -102,9 +124,11 @@ public class FullStopPunctuation {
             var maxScore: Float = -Float.infinity
             var maxClass = 0
 
-            for classIdx in 0 ..< 6 {
-                let idx: [NSNumber] = [0, NSNumber(value: i), NSNumber(value: classIdx)]
-                let score = logits[idx].floatValue
+            let tokenOffset = i * strideToken
+            for classIdx in 0 ..< classCount {
+                let offset = tokenOffset + classIdx * strideClass
+                guard offset < logits.count else { continue }
+                let score = Float(logitsPointer[offset])
                 if score > maxScore {
                     maxScore = score
                     maxClass = classIdx
@@ -113,11 +137,13 @@ public class FullStopPunctuation {
 
             // Apply softmax to get probability
             var expSum: Float = 0
-            for classIdx in 0 ..< 6 {
-                let idx: [NSNumber] = [0, NSNumber(value: i), NSNumber(value: classIdx)]
-                expSum += exp(logits[idx].floatValue - maxScore)
+            for classIdx in 0 ..< classCount {
+                let offset = tokenOffset + classIdx * strideClass
+                guard offset < logits.count else { continue }
+                let score = Float(logitsPointer[offset])
+                expSum += exp(score - maxScore)
             }
-            let probability = exp(0) / expSum
+            let probability = expSum > 0 ? (1 / expSum) : 0
 
             let entity = id2label[maxClass] ?? "0"
             let token = tokens[i - 1]  // Adjust for CLS token offset
@@ -151,10 +177,15 @@ public class FullStopPunctuation {
             let startWord = (batchIdx == 0) ? 0 : overlap
             let text = batch.joined(separator: " ")
 
-            print("Processing chunk: \(String(text.prefix(50)))...")
+            if enableLogging {
+                print("Processing chunk: \(String(text.prefix(50)))...")
+            }
 
             let tokenPredictions = try predictChunk(text)
-            print("Number of predictions: \(tokenPredictions.count)")
+
+            if enableLogging {
+                print("Number of predictions: \(tokenPredictions.count)")
+            }
 
             // Simple approach: map tokens to words by tracking word boundaries
             var wordResults: [(String, String, Float)] = []

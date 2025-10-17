@@ -71,5 +71,5 @@ def convert(conversion_type, model_path, saved_name):
 
 
 model_name = "oliverguhr/fullstop-punctuation-multilang-large"
-convert(Conversion.QUANTIZE, model_name, "FullStopPunctuation")
-#convert(Conversion.NONE, model_name, "FullStopPunctuation")
+#convert(Conversion.QUANTIZE, model_name, "FullStopPunctuation")
+convert(Conversion.NONE, model_name, "FullStopPunctuation")

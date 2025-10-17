@@ -30,19 +30,20 @@ public class DualModelPunctuator {
 
         switch model {
         case .punctuate:
-            let tokenizer = try Tokenizer()
-            let punctuateModel = try loadPunctuateModel()
-            self.punctuateProcessor = SegmentProcessor(model: punctuateModel, tokenizer: tokenizer)
-            self.fullStopModel = nil
+            if punctuateProcessor == nil {
+                let tokenizer = try Tokenizer()
+                let punctuateModel = try loadPunctuateModel()
+                self.punctuateProcessor = try SegmentProcessor(
+                    model: punctuateModel, tokenizer: tokenizer)
+            }
 
         case .fullStop:
-            self.punctuateProcessor = nil
-            do {
-                self.fullStopModel = try createFullStopPunctuation()
-                print("FullStopPunctuation created successfully: \(self.fullStopModel != nil)")
-            } catch {
-                print("Error creating FullStopPunctuation: \(error)")
-                throw error
+            if fullStopModel == nil {
+                do {
+                    self.fullStopModel = try createFullStopPunctuation()
+                } catch {
+                    throw error
+                }
             }
 
             // Verify initialization

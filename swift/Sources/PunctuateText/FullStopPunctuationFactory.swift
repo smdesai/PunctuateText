@@ -3,9 +3,13 @@ import Foundation
 
 /// Public factory function to create FullStopPunctuation instances
 @available(macOS 15.0, iOS 17.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
-public func createFullStopPunctuation() throws -> FullStopPunctuation {
-    let coreMLModel = try loadFullStopPunctuationModel()
-    return try FullStopPunctuation(model: coreMLModel)
+public func createFullStopPunctuation(enableLogging: Bool = false) throws -> FullStopPunctuation {
+
+    let config = MLModelConfiguration()
+    config.computeUnits = .cpuAndNeuralEngine
+
+    let coreMLModel = try loadFullStopPunctuationModel(configuration: config)
+    return try FullStopPunctuation(model: coreMLModel, enableLogging: enableLogging)
 }
 
 /// Factory functions to create FullStopPunctuation model instances
