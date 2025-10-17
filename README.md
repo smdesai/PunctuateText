@@ -15,8 +15,12 @@ The `coreml-conversion/` folder contains Python utilities for exporting the Hugg
 
 1. Install dependencies (`torch`, `transformers`, `coremltools`).
 2. Run `python distilbert-convert.py` and `python full-stop-convert.py` to produce `.mlpackage` artifacts under `coreml-conversion/`.
-3. Run `./compile.sh` to produce compiled models which is located in `MLModels/`
+3. Run `./compile.sh` to produce compiled models under `coreml-conversion/MLModels/`.
 4. Copy the generated `.mlmodelc` directories into `swift/Sources/PunctuateText/Resources/` (already populated in this repo).
+
+## SegmentTextKit Dependency
+
+Download or build `SegmentTextKit-Package.zip` from [`smdesai/SegmentText`](https://github.com/smdesai/SegmentText). Unzip the archive so the extracted `SegmentTextKit/` package directory sits alongside this `README.md` (i.e., `SegmentTextKit/`, `swift/`, and `coreml-conversion/` share the same parent). The Swift package references that local dependency during builds.
 
 ## Building the Swift Package
 
@@ -66,4 +70,4 @@ try punctuator.switchModel(to: .fullStop)
 - Conversion scripts: `coreml-conversion/`
 - Segmenter dependency: [`SegmentTextKit`](https://github.com/sachin-desai/SegmentText)
 
-Requirements: macOS 15 / iOS 18 / tvOS 18 / watchOS 11 / visionOS 2 and Swift 5.9+
+Requirements: macOS 15 / iOS 17 / tvOS 18 / watchOS 11 / visionOS 2 and Swift 5.9+
